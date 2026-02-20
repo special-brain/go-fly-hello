@@ -13,7 +13,6 @@ import (
 
 var db *sql.DB
 
-// Структура для приема и отправки данных
 type ScoreRecord struct {
 	Name  string `json:"name"`
 	Score int    `json:"score"`
@@ -32,7 +31,6 @@ func initDB() {
 		log.Fatal("Ошибка открытия БД:", err)
 	}
 
-	// Создаем таблицу рекордов, если её нет
 	query := `
 	CREATE TABLE IF NOT EXISTS daily_scores (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,7 +43,6 @@ func initDB() {
 	}
 }
 
-// Встроенный HTML с добавленной логикой рекордов
 const snakeHTML = `<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -136,7 +133,7 @@ const snakeHTML = `<!DOCTYPE html>
             } catch (e) { console.error(e); }
         }
 
-        async function saveScoreAndReload() {
+        async function saveScoreAndShowTop() {
             if (score > 0) {
                 let name = prompt("Игра окончена!\nВаш счет: " + score + "\nВведите имя для таблицы рекордов:", "Игрок");
                 if (name) {
@@ -149,6 +146,23 @@ const snakeHTML = `<!DOCTYPE html>
             } else {
                 alert("Игра окончена! Вы ничего не съели.");
             }
+
+            // Запрашиваем обновленный ТОП-5 и показываем его
+            try {
+                let res = await fetch('/api/scores');
+                let scores = await res.json();
+                let topMessage = "🏆 ТОП-5 ИГРОКОВ ЗА СЕГОДНЯ:\n\n";
+                
+                if (!scores || scores.length === 0) {
+                    topMessage += "Пока нет рекордов";
+                } else {
+                    scores.forEach((s, i) => {
+                        topMessage += (i + 1) + ". " + s.name + " - " + s.score + "\n";
+                    });
+                }
+                alert(topMessage);
+            } catch (e) { console.error("Ошибка при получении топа:", e); }
+
             document.location.reload();
         }
 
@@ -161,12 +175,12 @@ const snakeHTML = `<!DOCTYPE html>
             if (isGameOver) return;
             if (hasGameEnded()) {
                 isGameOver = true;
-                saveScoreAndReload();
+                saveScoreAndShowTop();
                 return;
             }
             setTimeout(() => {
                 clearCanvas(); drawFood(); advanceSnake(); drawSnake(); main();
-            }, 100);
+            }, 150); // Увеличили интервал со 100 до 150 мс, чтобы снизить скорость
         }
 
         function clearCanvas() { ctx.fillStyle = "black"; ctx.fillRect(0, 0, canvas.width, canvas.height); }
@@ -180,17 +194,29 @@ const snakeHTML = `<!DOCTYPE html>
             });
         }
         function advanceSnake() {
-            const head = {x: snake[0].x + dx, y: snake[0].y + dy};
+            let newX = snake[0].x + dx;
+            let newY = snake[0].y + dy;
+
+            // Логика прохождения сквозь стены (телепортация на другую сторону)
+            if (newX < 0) newX = canvas.width - gridSize;
+            else if (newX >= canvas.width) newX = 0;
+
+            if (newY < 0) newY = canvas.height - gridSize;
+            else if (newY >= canvas.height) newY = 0;
+
+            const head = {x: newX, y: newY};
             snake.unshift(head);
+            
             if (head.x === food.x && head.y === food.y) {
                 score += 10; document.getElementById('score').innerText = score; randomFood();
             } else { snake.pop(); }
         }
         function hasGameEnded() {
+            // Оставили только проверку на столкновение с самим собой
             for (let i = 4; i < snake.length; i++) {
                 if (snake[i].x === snake[0].x && snake[i].y === snake[0].y) return true;
             }
-            return snake[0].x < 0 || snake[0].x >= canvas.width || snake[0].y < 0 || snake[0].y >= canvas.height;
+            return false;
         }
 
         document.addEventListener("keydown", (e) => {
@@ -224,9 +250,7 @@ func gameHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, snakeHTML)
 }
 
-// API: Получение рекордов за день
 func apiGetScores(w http.ResponseWriter, r *http.Request) {
-	// Фильтруем записи по сегодняшней дате (UTC)
 	rows, err := db.Query(`
 		SELECT name, score 
 		FROM daily_scores 
@@ -251,7 +275,6 @@ func apiGetScores(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(scores)
 }
 
-// API: Сохранение рекорда
 func apiPostScore(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Метод не поддерживается", 405)
@@ -277,7 +300,6 @@ func main() {
 	initDB()
 	defer db.Close()
 
-	// Роуты
 	http.HandleFunc("/", gameHandler)
 	http.HandleFunc("/api/scores", apiGetScores)
 	http.HandleFunc("/api/score", apiPostScore)
